@@ -69,7 +69,7 @@ def _dict_to_workflow_node_execution_model(data: dict[str, Any]) -> WorkflowNode
 
     # Handle datetime fields
     created_at = data.get("created_at")
-    if created_at:
+    if created_at and created_at not in {"null", ""}:
         if isinstance(created_at, str):
             model.created_at = datetime.fromisoformat(created_at)
         elif isinstance(created_at, (int, float)):
@@ -81,7 +81,7 @@ def _dict_to_workflow_node_execution_model(data: dict[str, Any]) -> WorkflowNode
         model.created_at = datetime.now()
 
     finished_at = data.get("finished_at")
-    if finished_at:
+    if finished_at and finished_at not in {"null", ""}:
         if isinstance(finished_at, str):
             model.finished_at = datetime.fromisoformat(finished_at)
         elif isinstance(finished_at, (int, float)):
@@ -325,9 +325,51 @@ class LogstoreAPIWorkflowNodeExecutionRepository(DifyAPIWorkflowNodeExecutionRep
     ) -> WorkflowNodeExecutionModel | None:
         """
         Get a workflow node execution by its ID.
-        Uses query syntax to get raw logs and selects the one with max log_version.
+
+        Strategy:
+        1. Try LogStore query first
+        2. If not found, check debug cache (for SINGLE_STEP executions)
+        3. Return None if not found anywhere
+
+        The debug cache helps handle LogStore indexing delays during node debugging.
         """
         logger.debug("get_execution_by_id: execution_id=%s, tenant_id=%s", execution_id, tenant_id)
+
+        from extensions.logstore.debug_execution_cache import DebugExecutionCache
+
+        try:
+            result = self._query_from_logstore(execution_id, tenant_id)
+            if result is not None:
+                return result
+
+            # Check debug cache as fallback
+            # This helps when LogStore indexing is delayed (typically for SINGLE_STEP executions)
+            cached_result = DebugExecutionCache.get(execution_id)
+            if cached_result is not None:
+                logger.info(
+                    "Found execution in debug cache (LogStore indexing delay): execution_id=%s, tenant_id=%s",
+                    execution_id,
+                    tenant_id,
+                )
+                return cached_result
+
+            logger.warning(
+                "Execution not found in LogStore or debug cache: execution_id=%s, tenant_id=%s", execution_id, tenant_id
+            )
+            return None
+
+        except Exception:
+            logger.exception("Failed to get execution by ID: execution_id=%s", execution_id)
+            # Try cache as last resort on any error
+            cached_result = DebugExecutionCache.get(execution_id)
+            if cached_result is not None:
+                logger.info("Returning cached result after LogStore error: %s", execution_id)
+                return cached_result
+            raise
+
+    def _query_from_logstore(
+        self, execution_id: str, tenant_id: str | None = None
+    ) -> WorkflowNodeExecutionModel | None:
         try:
             # Escape parameters to prevent SQL injection
             escaped_execution_id = escape_identifier(execution_id)
