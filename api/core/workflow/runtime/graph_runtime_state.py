@@ -128,6 +128,7 @@ class _GraphRuntimeStateSnapshot:
     graph_execution_dump: str | None
     response_coordinator_dump: str | None
     paused_nodes: tuple[str, ...]
+    cleanup_mcp_sessions: bool
 
 
 class GraphRuntimeState:
@@ -146,6 +147,7 @@ class GraphRuntimeState:
         graph_execution: GraphExecutionProtocol | None = None,
         response_coordinator: ResponseStreamCoordinatorProtocol | None = None,
         graph: GraphProtocol | None = None,
+        cleanup_mcp_sessions: bool = True,
     ) -> None:
         self._variable_pool = variable_pool
         self._start_at = start_at
@@ -170,6 +172,7 @@ class GraphRuntimeState:
         self._pending_graph_execution_workflow_id: str | None = None
         self._paused_nodes: set[str] = set()
         self.stop_event: threading.Event = threading.Event()
+        self._cleanup_mcp_sessions = cleanup_mcp_sessions
 
         if graph is not None:
             self.attach_graph(graph)
@@ -294,6 +297,11 @@ class GraphRuntimeState:
             raise ValueError("tokens must be non-negative")
         self._total_tokens += tokens
 
+    @property
+    def cleanup_mcp_sessions(self) -> bool:
+        """Whether to cleanup MCP sessions when the graph execution ends."""
+        return self._cleanup_mcp_sessions
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
@@ -311,6 +319,7 @@ class GraphRuntimeState:
             "ready_queue": self.ready_queue.dumps(),
             "graph_execution": self.graph_execution.dumps(),
             "paused_nodes": list(self._paused_nodes),
+            "cleanup_mcp_sessions": self._cleanup_mcp_sessions,
         }
 
         if self._response_coordinator is not None and self._graph is not None:
@@ -331,6 +340,7 @@ class GraphRuntimeState:
             llm_usage=snapshot.llm_usage,
             outputs=snapshot.outputs,
             node_run_steps=snapshot.node_run_steps,
+            cleanup_mcp_sessions=snapshot.cleanup_mcp_sessions,
         )
         state._apply_snapshot(snapshot)
         return state
@@ -414,6 +424,7 @@ class GraphRuntimeState:
         graph_execution_payload = payload.get("graph_execution")
         response_payload = payload.get("response_coordinator")
         paused_nodes_payload = payload.get("paused_nodes", [])
+        cleanup_mcp_sessions = payload.get("cleanup_mcp_sessions", True)
 
         return _GraphRuntimeStateSnapshot(
             start_at=start_at,
@@ -427,6 +438,7 @@ class GraphRuntimeState:
             graph_execution_dump=graph_execution_payload,
             response_coordinator_dump=response_payload,
             paused_nodes=tuple(map(str, paused_nodes_payload)),
+            cleanup_mcp_sessions=cleanup_mcp_sessions,
         )
 
     def _apply_snapshot(self, snapshot: _GraphRuntimeStateSnapshot) -> None:
@@ -435,6 +447,7 @@ class GraphRuntimeState:
         self._node_run_steps = snapshot.node_run_steps
         self._llm_usage = snapshot.llm_usage.model_copy()
         self._outputs = deepcopy(snapshot.outputs)
+        self._cleanup_mcp_sessions = snapshot.cleanup_mcp_sessions
         if snapshot.has_variable_pool or self._variable_pool is None:
             self._variable_pool = snapshot.variable_pool
 
