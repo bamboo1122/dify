@@ -214,7 +214,7 @@ vdb = [
     "tablestore==6.2.0",
     "tcvectordb~=1.6.4",
     "tidb-vector==0.0.9",
-    "upstash-vector==0.6.0",
+    "upstash-vector==0.8.0",
     "volcengine-compat~=1.0.0",
     "weaviate-client==4.17.0",
     "xinference-client~=1.2.2",
